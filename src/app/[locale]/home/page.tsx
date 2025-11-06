@@ -1,12 +1,12 @@
 import { Button } from "@/components/ui/button"
+import { useTranslations } from "next-intl";
 
-function HomePage() {
+export default function HomePage() {
+  const t = useTranslations("HomePage");
   return (
     <div className="flex items-center">
-      <h2>HomePage</h2>
+      <h2>{t("title")}</h2>
       <Button variant="secondary">Click Me</Button>
     </div>
   )
 }
-
-export default HomePage
