@@ -11,7 +11,7 @@ interface AuthResponse {
 export async function POST(request: Request) {
   try {
     const { email, password } = await request.json();
-    
+
     // 1. 调用你的Go后端认证API
     const apiBaseUrl = process.env.GO_API_URL;
     const res = await fetch(`${apiBaseUrl}/passport/login`, {
@@ -27,8 +27,8 @@ export async function POST(request: Request) {
     const { access_token, refresh_token, expires_in }: AuthResponse = await res.json();
 
     // 2. 将Tokens存储在HttpOnly Cookies中
-    const cookieStore = cookies();
-    
+    const cookieStore = await cookies();
+
     // 存储 Access Token
     cookieStore.set('access_token', access_token, {
       httpOnly: true,
