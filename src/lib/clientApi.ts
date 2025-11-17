@@ -1,17 +1,24 @@
-interface FetchOptions extends RequestInit {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  data?: any;
+import { IResponse } from './type';
+
+interface FetchOptions<T = unknown> extends RequestInit {
+  data?: T;
 }
 
 // 这个fetcher在浏览器中运行
-async function clientFetch(endpoint: string, options: FetchOptions = {}) {
+async function clientFetch<TRequest = unknown, TResponse = unknown>(
+  endpoint: string,
+  options: FetchOptions<TRequest> = {}
+): Promise<IResponse<TResponse>> {
   // 基础URL是相对路径，指向我们自己的BFF API
-  const url = `/api${endpoint}`; 
-  
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
-    ...options.headers,
-  };
+  const url = `/api${endpoint}`;
+
+  // 合并用户传入的 headers
+  const headers = new Headers(options.headers);
+
+  // 防止修改用户设置的 Content-Type
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
 
   const config: RequestInit = {
     ...options,
@@ -31,16 +38,28 @@ async function clientFetch(endpoint: string, options: FetchOptions = {}) {
   }
 
   // 假设所有成功的API都返回JSON
-  return res.json();
+  return await res.json();
 }
 
 // 导出便捷方法
 export const clientApi = {
-  get: (endpoint: string, options: FetchOptions = {}) =>
-    clientFetch(endpoint, { ...options, method: 'GET' }),
-  
-  post: (endpoint: string, data: any, options: FetchOptions = {}) =>
-    clientFetch(endpoint, { ...options, method: 'POST', data }),
-  
-  // ... put, delete ...
+  get: <TResponse = unknown>(endpoint: string, options: FetchOptions = {}) =>
+    clientFetch<unknown, TResponse>(endpoint, { ...options, method: 'GET' }),
+
+  post: <TRequest = unknown, TResponse = unknown>(
+    endpoint: string,
+    data: TRequest,
+    options: FetchOptions<TRequest> = {}
+  ) =>
+    clientFetch<TRequest, TResponse>(endpoint, { ...options, method: 'POST', data }),
+
+  put: <TRequest = unknown, TResponse = unknown>(
+    endpoint: string,
+    data: TRequest,
+    options: FetchOptions<TRequest> = {}
+  ) =>
+    clientFetch<TRequest, TResponse>(endpoint, { ...options, method: 'PUT', data }),
+
+  delete: <TResponse = unknown>(endpoint: string, options: FetchOptions = {}) =>
+    clientFetch<unknown, TResponse>(endpoint, { ...options, method: 'DELETE' }),
 };

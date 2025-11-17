@@ -1,5 +1,6 @@
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
+import { IResponse } from './type';
 
 // ------------------------------------------------------------------
 // 1. 自动刷新Token的逻辑 (防止并发刷新)
@@ -10,7 +11,7 @@ import { NextResponse } from 'next/server';
 let refreshPromise: Promise<string | null> | null = null;
 
 async function getNewAccessToken(): Promise<string | null> {
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   const refreshToken = cookieStore.get('refresh_token')?.value;
 
   if (!refreshToken) {
@@ -19,7 +20,7 @@ async function getNewAccessToken(): Promise<string | null> {
   }
 
   console.log('Attempting to refresh access token...');
-  
+
   try {
     const apiBaseUrl = process.env.GO_API_URL;
     const res = await fetch(`${apiBaseUrl}/auth/refresh`, {
@@ -44,13 +45,13 @@ async function getNewAccessToken(): Promise<string | null> {
     });
     // 可选：如果Go后端返回了新的refresh_token，也更新它
     if (refresh_token) {
-       cookieStore.set('refresh_token', refresh_token, {
-         httpOnly: true,
-         secure: process.env.NODE_ENV === 'production',
-         path: '/',
-         maxAge: 60 * 60 * 24 * 30,
-         sameSite: 'lax',
-       });
+      cookieStore.set('refresh_token', refresh_token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        path: '/',
+        maxAge: 60 * 60 * 24 * 30,
+        sameSite: 'lax',
+      });
     }
 
     console.log('Access token refreshed successfully.');
@@ -73,34 +74,36 @@ async function getNewAccessToken(): Promise<string | null> {
 // 2. 服务端 Fetch 封装器
 // ------------------------------------------------------------------
 
-interface ServerFetchOptions extends RequestInit {
-  data?: any;
+interface ServerFetchOptions<T = unknown> extends RequestInit {
+  data?: T;
   // 允许在RSC中传递缓存控制
   cache?: RequestInit['cache'];
   next?: RequestInit['next'];
 }
 
 // 内部的fetch实现
-async function _serverFetch(
-  endpoint: string, 
-  options: ServerFetchOptions, 
+async function _serverFetch<T = unknown>(
+  endpoint: string,
+  options: ServerFetchOptions<T>,
   isRetry: boolean = false
 ): Promise<Response> {
-  
+
   const apiBaseUrl = process.env.GO_API_URL;
   const url = `${apiBaseUrl}${endpoint}`;
-  
-  const cookieStore = cookies();
+
+  const cookieStore = await cookies();
   const accessToken = cookieStore.get('access_token')?.value;
 
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
-    ...options.headers,
-  };
+  const headers = new Headers(options.headers);
 
-  // 附加 Access Token
+  // 设置默认 Content-Type（如果用户没有设置）
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  // Authorization header 始终使用从 cookie 读取的 token（保护认证安全）
   if (accessToken) {
-    headers['Authorization'] = `Bearer ${accessToken}`;
+    headers.set('Authorization', `Bearer ${accessToken}`);
   }
 
   const config: RequestInit = {
@@ -111,7 +114,7 @@ async function _serverFetch(
   if (options.data) {
     config.body = JSON.stringify(options.data);
   }
-  
+
   // 执行请求
   const res = await fetch(url, config);
 
@@ -137,7 +140,7 @@ async function _serverFetch(
           // 确保重试时使用新token (虽然_serverFetch会重新读取cookie，但显示传递更安全)
           headers: {
             ...options.headers,
-            'Authorization': `Bearer ${newAccessToken}`
+            'Authorization': `Bearer ${newAccessToken}`,
           }
         }, true);
       } else {
@@ -159,8 +162,12 @@ async function _serverFetch(
 // ------------------------------------------------------------------
 
 // 这个是对外暴露的主函数，它处理响应解析
-async function serverFetch(endpoint: string, options: ServerFetchOptions) {
-  const res = await _serverFetch(endpoint, options);
+async function serverFetch<TRequest = unknown, TResponse = unknown>(
+  endpoint: string,
+  options: ServerFetchOptions<TRequest>,
+  isRetry?: boolean
+): Promise<IResponse<TResponse | null>> {
+  const res = await _serverFetch(endpoint, options, isRetry);
 
   if (!res.ok) {
     // 如果重试后仍然失败（或非401失败）
@@ -173,24 +180,28 @@ async function serverFetch(endpoint: string, options: ServerFetchOptions) {
     (error as any).status = res.status;
     throw error;
   }
-  
+
   // 处理 204 No Content 等情况
   if (res.status === 204) {
-    return null;
+    return {
+      code: '204',
+      data: null,
+      message: ''
+    };
   }
-  
-  return res.json();
+
+  return await res.json();
 }
 
 export const serverApi = {
-  get: (endpoint: string, options: ServerFetchOptions = {}) =>
-    serverFetch(endpoint, { ...options, method: 'GET' }),
-  
-  post: (endpoint: string, data: any, options: ServerFetchOptions = {}) =>
-    serverFetch(endpoint, { ...options, method: 'POST', data }),
-    
+  get: <TResponse = unknown>(endpoint: string, options: ServerFetchOptions = {}, isRetry?: boolean) =>
+    serverFetch<unknown, TResponse>(endpoint, { ...options, method: 'GET' }, isRetry),
+
+  post: <TRequest = unknown, TResponse = unknown>(endpoint: string, data: TRequest, options: ServerFetchOptions<TRequest> = {}, isRetry?: boolean) =>
+    serverFetch<TRequest, TResponse>(endpoint, { ...options, method: 'POST', data }, isRetry),
+
   // ... put, delete ...
-  
+
   // 暴露原始的 _serverFetch 以便在Route Handlers中获取原始Response对象
   // 这样可以在BFF层透传Go后端的响应状态码
   raw: _serverFetch,
